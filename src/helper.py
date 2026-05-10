@@ -1,5 +1,4 @@
 import fitz
-import os
 import time
 import threading
 
@@ -19,6 +18,7 @@ GROQ_API_KEY   = st.secrets["GROQ_API_KEY"]
 
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 groq_client   = Groq(api_key=GROQ_API_KEY)
+
 
 # =========================================
 # SYSTEM PROMPT
@@ -44,11 +44,6 @@ Rules you MUST follow on every response:
 
 SUMMARY_PROMPT = """
 Analyze this resume. Return ONLY the structure below. No intro. No outro.
-Format Rules:
-- Convert all text wrapped inside ** ** into proper markdown bold
-- Keep clean spacing and line breaks
-- Use bullet points where needed
-- Do NOT return raw ** symbols in output
 
 **Role:** [target role / level inferred from resume]
 **Skills:** [top 6 technical skills, comma-separated]
@@ -134,22 +129,11 @@ def extract_text_from_pdf(upload_pdf) -> str:
 
 
 # =========================================
-# LLM WRAPPERS
+# LLM WRAPPERS  (Groq → Gemini fallback)
 # =========================================
 
-def ask_gemini(prompt: str) -> str:
-    logger.debug("Gemini call | prompt_len=%d", len(prompt))
-    response = gemini_client.models.generate_content(
-        model="gemini-2.5-flash",
-        config={"system_instruction": SYS_PROMPT},
-        contents=prompt,
-    )
-    logger.info("Gemini response | chars=%d", len(response.text))
-    return response.text
-
-
-def ask_groq(prompt: str, max_tokens: int = 400) -> str:
-    logger.debug("Groq call | max_tokens=%d | prompt_len=%d", max_tokens, len(prompt))
+def _call_groq(prompt: str, max_tokens: int) -> str:
+    """Raw Groq call — raises on any error."""
     t0 = time.time()
     response = groq_client.chat.completions.create(
         model="llama-3.3-70b-versatile",
@@ -161,8 +145,51 @@ def ask_groq(prompt: str, max_tokens: int = 400) -> str:
         max_tokens=max_tokens,
     )
     result = response.choices[0].message.content
-    logger.info("Groq response | chars=%d | elapsed=%.2fs", len(result), time.time() - t0)
+    logger.info("Groq  OK | chars=%d | elapsed=%.2fs", len(result), time.time() - t0)
     return result
+
+
+def _call_gemini(prompt: str) -> str:
+    """Raw Gemini call — raises on any error."""
+    t0 = time.time()
+    response = gemini_client.models.generate_content(
+        model="gemini-2.5-flash",
+        config={"system_instruction": SYS_PROMPT},
+        contents=prompt,
+    )
+    result = response.text
+    logger.info("Gemini OK | chars=%d | elapsed=%.2fs", len(result), time.time() - t0)
+    return result
+
+
+def ask_groq(prompt: str, max_tokens: int = 400) -> str:
+    """
+    Tries Groq first.
+    On ANY failure (rate limit, timeout, server error) automatically
+    falls back to Gemini and logs the reason.
+    Raises only if BOTH providers fail.
+    """
+    logger.debug("LLM call | max_tokens=%d | prompt_len=%d", max_tokens, len(prompt))
+
+    try:
+        return _call_groq(prompt, max_tokens)
+
+    except Exception as groq_err:
+        logger.warning(
+            "Groq failed (%s: %s) — switching to Gemini",
+            type(groq_err).__name__,
+            str(groq_err)[:120],
+        )
+        st.toast("Groq limit reached — switching to Gemini", icon="⚡")
+
+        try:
+            return _call_gemini(prompt)
+
+        except Exception as gemini_err:
+            logger.error("Gemini also failed: %s", gemini_err)
+            raise RuntimeError(
+                f"Both providers failed.\nGroq: {groq_err}\nGemini: {gemini_err}"
+            ) from gemini_err
 
 
 # =========================================
