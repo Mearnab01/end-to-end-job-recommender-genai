@@ -9,13 +9,6 @@ LOG_FILE = LOG_DIR / "app.log"
 
 
 def get_logger(name: str) -> logging.Logger:
-    """
-    Returns a named logger that writes INFO+ to stdout
-    and DEBUG+ to logs/app.log.
-
-    Calling this multiple times with the same name is safe —
-    handlers are only attached once.
-    """
     logger = logging.getLogger(name)
 
     if logger.handlers:

@@ -7,8 +7,8 @@ def load_styles():
         <style>
         
         @import url('https://fonts.googleapis.com/icon?family=Material+Icons+Round');
-
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap');
+
 
         html, body {
             font-family: 'DM Sans', sans-serif;
@@ -68,7 +68,7 @@ def load_styles():
             border-radius: 16px;
             padding: 28px 32px 16px 32px;
             margin-bottom: 16px;
-            max-width: 480px;
+            max-width: 100%;
         }
 
         .auth-title {

@@ -20,7 +20,6 @@ GROQ_API_KEY   = st.secrets["GROQ_API_KEY"]
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 groq_client   = Groq(api_key=GROQ_API_KEY)
 
-
 # =========================================
 # SYSTEM PROMPT
 # =========================================
