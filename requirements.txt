@@ -1,0 +1,8 @@
+streamlit
+google-genai
+groq
+pymupdf
+python-dotenv
+apify-client
+guardrails-ai
+# mcp[cli]
