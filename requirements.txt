@@ -5,4 +5,8 @@ pymupdf
 python-dotenv
 apify-client
 guardrails-ai
-# mcp[cli]
+"mcp[cli]"
+
+"pydantic[email]"
+mem0ai
+

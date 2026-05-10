@@ -1,14 +1,22 @@
 import streamlit as st
 
+from src.styles import load_styles
 from src.helper import (
     extract_text_from_pdf,
-    ask_groq
+    ask_groq,
+    run_with_progress,
+    SUMMARY_PROMPT,
+    GAPS_PROMPT,
+    ROADMAP_PROMPT,
+    KEYWORDS_PROMPT,
 )
+from src.job_api import fetch_linkedin_jobs, fetch_naukri_jobs
 
-from src.job_api import (
-    fetch_linkedin_jobs,
-    fetch_naukri_jobs
-)
+from src.components.header import render_header
+from src.components.upload_section import render_upload
+from src.components.analysis_section import render_analysis
+from src.components.linkedin_jobs import render_linkedin_jobs
+from src.components.naukri_jobs import render_naukri_jobs
 
 # =========================================
 # PAGE CONFIG
@@ -16,416 +24,125 @@ from src.job_api import (
 
 st.set_page_config(
     page_title="AI Job Recommender",
-    page_icon="🚀",
-    layout="wide"
+    page_icon="rocket_launch",
+    layout="wide",
 )
 
 # =========================================
-# CUSTOM CSS
+# STYLES + HEADER
 # =========================================
 
-st.markdown("""
-<style>
-
-.main {
-    padding-top: 1rem;
-}
-
-.card {
-    background-color: #111827;
-    padding: 20px;
-    border-radius: 16px;
-    border: 1px solid #1f2937;
-    margin-bottom: 20px;
-}
-
-.job-card {
-    background-color: #0f172a;
-    padding: 18px;
-    border-radius: 14px;
-    border: 1px solid #1e293b;
-    margin-bottom: 14px;
-}
-
-.small-text {
-    color: #9ca3af;
-    font-size: 14px;
-}
-
-</style>
-""", unsafe_allow_html=True)
-
-# =========================================
-# HEADER
-# =========================================
-
-st.title("🚀 AI Resume Job Recommender")
-
-st.caption(
-    "Upload your resume and get AI-powered insights, "
-    "skill gap analysis, roadmap suggestions, "
-    "and job recommendations."
-)
+load_styles()
+render_header()
 
 # =========================================
 # FILE UPLOAD
 # =========================================
 
-uploaded_file = st.file_uploader(
-    "📄 Upload Resume",
-    type=["pdf"]
-)
+uploaded_file = render_upload()
 
 # =========================================
-# MAIN APP
+# MAIN FLOW
 # =========================================
 
 if uploaded_file:
 
-    # -------------------------------
-    # Extract Resume
-    # -------------------------------
+    # ----------------------------------------
+    # Step 1 – Extract resume text
+    # ----------------------------------------
 
-    with st.spinner("📄 Extracting resume text..."):
-        resume_text = extract_text_from_pdf(uploaded_file)
-
-    # -------------------------------
-    # AI Analysis
-    # -------------------------------
-
-    with st.spinner("🧠 Running AI analysis..."):
-
-        summary = ask_groq(f"""
-        Analyze this resume professionally.
-
-        Return:
-        - Short summary
-        - Skills
-        - Education
-        - Experience
-
-        Resume:
-        {resume_text}
-        """)
-
-        gaps = ask_groq(f"""
-        Analyze missing skills, certifications,
-        weak areas, and improvement opportunities.
-
-        Resume:
-        {resume_text}
-        """)
-
-        roadmap = ask_groq(f"""
-        Create a future roadmap for this candidate.
-
-        Include:
-        - Skills to learn
-        - Certifications
-        - Projects
-        - Career strategy
-
-        Resume:
-        {resume_text}
-        """)
-
-    # =========================================
-    # RESULTS SECTION
-    # =========================================
-
-    st.success("✅ Resume Analysis Completed")
-
-    col1, col2 = st.columns(2)
-
-    # -------------------------------
-    # SUMMARY
-    # -------------------------------
-
-    with col1:
-
-        st.markdown("## 📑 Resume Summary")
-
-        st.markdown(
-            f"""
-            <div class="card">
-            {summary}
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-    # -------------------------------
-    # SKILL GAPS
-    # -------------------------------
-
-    with col2:
-
-        st.markdown("## 🛠️ Skill Gap Analysis")
-
-        st.markdown(
-            f"""
-            <div class="card">
-            {gaps}
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-    # -------------------------------
-    # ROADMAP
-    # -------------------------------
-
-    st.markdown("## 🚀 Career Roadmap")
-
-    st.markdown(
-        f"""
-        <div class="card">
-        {roadmap}
-        </div>
-        """,
-        unsafe_allow_html=True
+    resume_text = run_with_progress(
+        "Extracting resume text…",
+        extract_text_from_pdf,
+        uploaded_file,
     )
 
-    # =========================================
-    # JOB SECTION
-    # =========================================
+    if not resume_text or not resume_text.strip():
+        st.error("Could not extract text from the PDF. Please try another file.")
+        st.stop()
 
-    if st.button("💼 Get Job Recommendations"):
+    # ----------------------------------------
+    # Step 2 – AI analysis, each with its own
+    #           progress bar so users see motion
+    # ----------------------------------------
 
-        with st.spinner("🔎 Extracting job keywords..."):
+    summary = run_with_progress(
+        "Analysing resume…",
+        ask_groq,
+        SUMMARY_PROMPT.format(resume=resume_text),
+        400,
+    )
 
-            keywords = ask_groq(f"""
-            Based on this resume,
-            generate the BEST job search keywords.
+    gaps = run_with_progress(
+        "Identifying skill gaps…",
+        ask_groq,
+        GAPS_PROMPT.format(resume=resume_text),
+        350,
+    )
 
-            Return ONLY comma-separated keywords.
+    roadmap = run_with_progress(
+        "Building career roadmap…",
+        ask_groq,
+        ROADMAP_PROMPT.format(resume=resume_text),
+        400,
+    )
 
-            Resume Summary:
-            {summary}
-            """)
+    # ----------------------------------------
+    # Step 3 – Render analysis cards
+    # ----------------------------------------
 
-            search_keywords = keywords.replace("\n", "").strip()
+    render_analysis(summary, gaps, roadmap)
 
-        st.info(f"🎯 Keywords: {search_keywords}")
+    # ----------------------------------------
+    # Step 4 – Job recommendations (on demand)
+    # ----------------------------------------
 
-        # =========================================
-        # FETCH JOBS
-        # =========================================
+    st.markdown(
+        """
+        <div class="section-label" style="margin-top:32px;">
+            <span class="material-icons-round mi">work_history</span>
+            Job Recommendations
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-        with st.spinner("🌍 Fetching jobs..."):
+    if st.button("Get Job Recommendations", use_container_width=False):
 
-            linkedin_jobs = fetch_linkedin_jobs(
-                search_keywords,
-                rows=15
-            )
+        # -- Extract keywords --
+        raw_keywords = run_with_progress(
+            "Extracting job keywords…",
+            ask_groq,
+            KEYWORDS_PROMPT.format(summary=summary),
+            120,
+        )
+        search_keywords = raw_keywords.replace("\n", "").strip()
 
-            naukri_jobs = fetch_naukri_jobs(
-                search_keywords,
-                rows=15
-            )
-
-        # =========================================
-# LINKEDIN JOBS
-# =========================================
-
-st.markdown("## 🔵 LinkedIn Jobs")
-
-if linkedin_jobs:
-
-    for job in linkedin_jobs[:10]:
-
-        job_link = (
-            job.get("applyUrl")
-            or job.get("jobUrl")
+        st.markdown(
+            f"""
+            <div class="keyword-banner">
+                <span class="material-icons-round mi">travel_explore</span>
+                &nbsp;<strong>Keywords:</strong>&nbsp;{search_keywords}
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
 
-        company_logo = job.get("companyLogo", "")
+        # -- Fetch LinkedIn & Naukri with separate progress bars --
+        linkedin_jobs = run_with_progress(
+            "Fetching LinkedIn jobs…",
+            fetch_linkedin_jobs,
+            search_keywords,
+            rows = 15,
+        )
 
-        with st.container():
+        naukri_jobs = run_with_progress(
+            "Fetching Naukri jobs…",
+            fetch_naukri_jobs,
+            search_keywords,
+            rows = 15,
+        )
 
-            st.markdown("""
-            <hr style='margin-top:10px;margin-bottom:10px;'>
-            """, unsafe_allow_html=True)
-
-            col1, col2 = st.columns([1, 5])
-
-            # =================================
-            # COMPANY LOGO
-            # =================================
-
-            with col1:
-
-                if company_logo:
-                    st.image(company_logo, width=70)
-
-            # =================================
-            # JOB DETAILS
-            # =================================
-
-            with col2:
-
-                st.subheader(f"💼 {job.get('title')}")
-
-                st.markdown(
-                    f"""
-                    🏢 **{job.get('companyName', 'Unknown Company')}**  
-                    📍 {job.get('location', 'N/A')}  
-                    🧑‍💻 {job.get('experienceLevel', 'N/A')}  
-                    🕒 {job.get('postedTime', 'N/A')}  
-                    👥 {job.get('applicationsCount', 'N/A')}  
-                    🏷️ {job.get('workType', 'N/A')}
-                    """
-                )
-
-                # =============================
-                # BUTTONS
-                # =============================
-
-                btn1, btn2 = st.columns(2)
-
-                with btn1:
-                    st.link_button(
-                        "🔗 Apply Now",
-                        job_link,
-                        use_container_width=True
-                    )
-
-                with btn2:
-
-                    company_url = job.get("companyUrl")
-
-                    if company_url:
-                        st.link_button(
-                            "🏢 Company Page",
-                            company_url,
-                            use_container_width=True
-                        )
-
-                # =============================
-                # SKILLS
-                # =============================
-
-                description = job.get("description", "")
-
-                with st.expander("📄 View Job Description"):
-
-                    st.write(description[:3000])
-
-# =========================================
-# NO JOBS
-# =========================================
-
-else:
-    st.warning("No LinkedIn jobs found.")
-
-# =========================================
-# NAUKRI JOBS
-# =========================================
-
-st.markdown("## 🇮🇳 Naukri Jobs")
-
-if naukri_jobs:
-
-    for job in naukri_jobs[:10]:
-
-        job_link = job.get("jdURL")
-
-        company_logo = job.get("logoPathV3", "")
-
-        with st.container():
-
-            st.markdown("""
-            <hr style='margin-top:10px;margin-bottom:10px;'>
-            """, unsafe_allow_html=True)
-
-            col1, col2 = st.columns([1, 5])
-
-            # =================================
-            # COMPANY LOGO
-            # =================================
-
-            with col1:
-
-                if company_logo:
-                    st.image(company_logo, width=70)
-
-            # =================================
-            # JOB DETAILS
-            # =================================
-
-            with col2:
-
-                st.subheader(f"💼 {job.get('title')}")
-
-                st.markdown(
-                    f"""
-                    🏢 **{job.get('companyName', 'Unknown Company')}**  
-                    📍 {job.get('location', 'N/A')}  
-                    🧑‍💻 {job.get('experience', 'N/A')}  
-                    💰 {job.get('salary', 'Not Disclosed')}  
-                    🕒 {job.get('footerPlaceholderLabel', 'N/A')}
-                    """
-                )
-
-                # =============================
-                # SKILLS
-                # =============================
-
-                skills = job.get("tagsAndSkills")
-
-                if skills:
-
-                    skill_list = skills.split(",")
-
-                    formatted_skills = " ".join(
-                        [f"`{skill.strip()}`" for skill in skill_list[:10]]
-                    )
-
-                    st.markdown(
-                        f"🛠️ Skills: {formatted_skills}"
-                    )
-
-                # =============================
-                # BUTTONS
-                # =============================
-
-                btn1, btn2 = st.columns(2)
-
-                with btn1:
-
-                    st.link_button(
-                        "🔗 Apply Now",
-                        job_link,
-                        use_container_width=True
-                    )
-
-                with btn2:
-
-                    company_jobs_url = job.get("companyJobsUrl")
-
-                    if company_jobs_url:
-
-                        st.link_button(
-                            "🏢 More Jobs",
-                            company_jobs_url,
-                            use_container_width=True
-                        )
-
-                # =============================
-                # DESCRIPTION
-                # =============================
-
-                with st.expander("📄 View Job Description"):
-
-                    st.write(
-                        job.get("jobDescription", "")[:3000]
-                    )
-
-# =========================================
-# NO JOBS
-# =========================================
-
-else:
-    st.warning("No Naukri jobs found.")
-
-        
+        # -- Render jobs --
+        render_linkedin_jobs(linkedin_jobs)
+        render_naukri_jobs(naukri_jobs)
